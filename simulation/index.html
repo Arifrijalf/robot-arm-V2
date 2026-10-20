@@ -1,0 +1,1193 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Simulasi 3D Robot Arm 5-DOF ESP32</title>
+  <!-- Three.js & OrbitControls via CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <style>
+    :root {
+      --bg-dark: #0f172a;
+      --panel-bg: rgba(30, 41, 59, 0.90);
+      --panel-border: rgba(255, 255, 255, 0.12);
+      --accent-blue: #38bdf8;
+      --accent-indigo: #818cf8;
+      --accent-amber: #fbbf24;
+      --accent-green: #34d399;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      touch-action: none; /* Mencegah pull-to-refresh pada smartphone */
+    }
+
+    /* 3D WebGL Canvas */
+    #canvas-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+
+    #canvas-container canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+      touch-action: none;
+    }
+
+    /* UI Overlay Layer (Tembus pandang untuk klik mouse & sentuhan) */
+    .ui-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10;
+      pointer-events: none; /* PENTING: Klik tembus ke canvas 3D */
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 12px;
+    }
+
+    .interactive {
+      pointer-events: auto !important; /* Hanya tombol, slider & joystick yang menerima klik */
+    }
+
+    /* Header Bar */
+    .header-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--panel-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 10px 16px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+      gap: 12px;
+    }
+
+    .header-title h1 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      background: linear-gradient(90deg, var(--accent-blue), var(--accent-indigo));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .header-title p {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Action Buttons */
+    .btn {
+      background: #1e293b;
+      color: var(--text-main);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 0.76rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      touch-action: manipulation;
+    }
+
+    .btn:hover {
+      background: #334155;
+      border-color: var(--accent-blue);
+      color: var(--accent-blue);
+    }
+
+    .btn:active {
+      transform: scale(0.96);
+    }
+
+    .btn.primary {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      border: none;
+      color: #fff;
+    }
+
+    .btn.active {
+      background: rgba(56, 189, 248, 0.25);
+      border-color: var(--accent-blue);
+      color: var(--accent-blue);
+    }
+
+    /* Main Grid Layout */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 290px 1fr 300px;
+      gap: 12px;
+      height: calc(100% - 70px);
+      margin-top: 8px;
+      pointer-events: none; /* Area kosong tetap tembus ke kamera 3D */
+    }
+
+    /* Panels */
+    .panel {
+      background: var(--panel-bg);
+      backdrop-filter: blur(14px);
+      border: 1px solid var(--panel-border);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.45);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+      max-height: 100%;
+      pointer-events: auto; /* Panel menerima klik slider & tombol */
+      transition: transform 0.25s ease, opacity 0.25s ease;
+    }
+
+    .panel-title {
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--accent-amber);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 6px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    /* Servo Controls */
+    .servo-control {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .servo-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.78rem;
+    }
+
+    .servo-name {
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .servo-pin {
+      font-size: 0.68rem;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--accent-blue);
+      font-family: monospace;
+    }
+
+    .servo-val-badge {
+      font-family: monospace;
+      font-weight: 700;
+      color: var(--accent-green);
+      font-size: 0.82rem;
+    }
+
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    input[type=range] {
+      flex: 1;
+      accent-color: var(--accent-blue);
+      cursor: pointer;
+      height: 6px;
+      border-radius: 3px;
+      background: #334155;
+    }
+
+    .btn-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    /* Center Overlay: Joysticks (Pointer-events NONE agar sela tengah tembus kamera) */
+    .center-overlay {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      pointer-events: none; /* Bebas rotasi kamera di atas joystick */
+      padding-bottom: 6px;
+    }
+
+    /* Container Joystick yang hanya aktif pada kotaknya */
+    .joysticks-container {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      background: var(--panel-bg);
+      backdrop-filter: blur(14px);
+      border: 1px solid var(--panel-border);
+      border-radius: 20px;
+      padding: 12px 20px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+      pointer-events: auto; /* Menerima sentuhan jempol */
+    }
+
+    .joystick-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .joystick-title {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--accent-blue);
+      text-transform: uppercase;
+    }
+
+    .joystick-subtitle {
+      font-size: 0.65rem;
+      color: var(--text-muted);
+    }
+
+    .joystick-base {
+      position: relative;
+      width: 105px;
+      height: 105px;
+      border-radius: 50%;
+      background: radial-gradient(circle, #1e293b 0%, #090d16 100%);
+      border: 2px solid rgba(56, 189, 248, 0.35);
+      box-shadow: inset 0 4px 10px rgba(0, 0, 0, 0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: grab;
+      touch-action: none;
+    }
+
+    .joystick-base:active {
+      cursor: grabbing;
+    }
+
+    .joystick-stick {
+      position: absolute;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #38bdf8, #2563eb);
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.5);
+      border: 2px solid #ffffff;
+      pointer-events: none;
+      transform: translate(0px, 0px);
+      transition: transform 0.04s ease-out;
+    }
+
+    /* Right Panel Telemetry */
+    .telemetry-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.72rem;
+    }
+
+    .telemetry-table th {
+      text-align: left;
+      color: var(--text-muted);
+      padding: 4px 3px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .telemetry-table td {
+      padding: 5px 3px;
+      font-family: monospace;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    .key-badge {
+      display: inline-block;
+      background: #334155;
+      color: #f1f5f9;
+      font-family: monospace;
+      font-size: 0.65rem;
+      padding: 2px 5px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .instruction-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      padding: 2px 0;
+    }
+
+    /* Kamera Help Tooltip */
+    .cam-hint {
+      position: absolute;
+      top: 68px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 20px;
+      padding: 6px 14px;
+      font-size: 0.7rem;
+      color: var(--accent-blue);
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+
+    /* Mobile Responsive Viewports */
+    @media (max-width: 900px) {
+      .header-title p {
+        display: none;
+      }
+
+      .main-grid {
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        pointer-events: none;
+        height: calc(100% - 60px);
+      }
+
+      .panel {
+        position: fixed;
+        top: 65px;
+        left: 10px;
+        right: 10px;
+        bottom: 160px;
+        z-index: 50;
+        background: rgba(15, 23, 42, 0.96);
+      }
+
+      .panel.hidden-mobile {
+        display: none !important;
+      }
+
+      .center-overlay {
+        position: fixed;
+        bottom: 10px;
+        left: 0;
+        right: 0;
+        padding: 0 10px;
+      }
+
+      .joysticks-container {
+        gap: 16px;
+        padding: 10px 14px;
+        width: 100%;
+        max-width: 380px;
+        justify-content: space-around;
+      }
+
+      .joystick-base {
+        width: 88px;
+        height: 88px;
+      }
+
+      .joystick-stick {
+        width: 38px;
+        height: 38px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- 3D WebGL Canvas Layer -->
+  <div id="canvas-container"></div>
+
+  <!-- Hint Navigasi Kamera -->
+  <div class="cam-hint">
+    <span>🎥 <strong>1 Jari / Klik Kiri</strong>: Putar 3D | <strong>2 Jari / Scroll</strong>: Zoom | <strong>Klik Kanan</strong>: Geser</span>
+  </div>
+
+  <!-- UI Overlay Layer -->
+  <div class="ui-layer">
+    <!-- Header Bar -->
+    <header class="header-bar interactive">
+      <div class="header-title">
+        <h1>Simulasi 3D Robot Arm</h1>
+        <p>ESP32 5-DOF Kinematics</p>
+      </div>
+      <div class="header-actions">
+        <!-- Tombol Tampilan Kamera Cepat -->
+        <button class="btn" id="btn-cam-reset" title="Kembalikan posisi sudut pandang">🔄 Reset Cam</button>
+        <button class="btn" id="btn-cam-front" title="Tampak Depan">👁️ Depan</button>
+        <button class="btn" id="btn-cam-top" title="Tampak Atas">📐 Atas</button>
+        <!-- Tombol Toggle Panel (Khusus Mobile & Laptop) -->
+        <button class="btn" id="btn-toggle-panel">🎛️ Panel</button>
+      </div>
+    </header>
+
+    <!-- Main Grid -->
+    <main class="main-grid">
+      <!-- Left Panel: Manual Servo Controls -->
+      <section class="panel interactive" id="left-panel">
+        <div class="panel-title">
+          <span>🎛️ Kendali Sudut Servo</span>
+          <span style="font-size: 0.68rem; color: var(--accent-green);">SG90 50Hz</span>
+        </div>
+
+        <!-- Servo 6: Base -->
+        <div class="servo-control">
+          <div class="servo-header">
+            <span class="servo-name">Base (Rotasi)</span>
+            <div>
+              <span class="servo-pin">GPIO 26</span>
+              <span class="servo-val-badge" id="val-base">90°</span>
+            </div>
+          </div>
+          <div class="slider-row">
+            <input type="range" id="slider-base" min="0" max="180" value="90" step="0.5">
+          </div>
+        </div>
+
+        <!-- Servo 4: Arm -->
+        <div class="servo-control">
+          <div class="servo-header">
+            <span class="servo-name">Arm (Shoulder)</span>
+            <div>
+              <span class="servo-pin">GPIO 14</span>
+              <span class="servo-val-badge" id="val-arm">90°</span>
+            </div>
+          </div>
+          <div class="slider-row">
+            <input type="range" id="slider-arm" min="0" max="180" value="90" step="0.5">
+          </div>
+        </div>
+
+        <!-- Servo 5: Elbow -->
+        <div class="servo-control">
+          <div class="servo-header">
+            <span class="servo-name">Elbow (Siku)</span>
+            <div>
+              <span class="servo-pin">GPIO 27</span>
+              <span class="servo-val-badge" id="val-elbow">90°</span>
+            </div>
+          </div>
+          <div class="slider-row">
+            <input type="range" id="slider-elbow" min="0" max="180" value="90" step="0.5">
+          </div>
+        </div>
+
+        <!-- Servo 3: Wrist -->
+        <div class="servo-control">
+          <div class="servo-header">
+            <span class="servo-name">Wrist (Pergelangan)</span>
+            <div>
+              <span class="servo-pin">GPIO 12</span>
+              <span class="servo-val-badge" id="val-wrist">90°</span>
+            </div>
+          </div>
+          <div class="slider-row">
+            <input type="range" id="slider-wrist" min="0" max="180" value="90" step="0.5">
+          </div>
+        </div>
+
+        <!-- Servo 2: Gripper -->
+        <div class="servo-control">
+          <div class="servo-header">
+            <span class="servo-name">Gripper (Penjepit)</span>
+            <div>
+              <span class="servo-pin">GPIO 13</span>
+              <span class="servo-val-badge" id="val-gripper">100°</span>
+            </div>
+          </div>
+          <div class="slider-row">
+            <input type="range" id="slider-gripper" min="0" max="180" value="100" step="0.5">
+          </div>
+        </div>
+
+        <!-- Preset Buttons -->
+        <div class="panel-title" style="margin-top: 6px;">
+          <span>⚡ Preset Posisi</span>
+        </div>
+        <div class="btn-grid">
+          <button class="btn primary" id="btn-home">🏠 Home (90°)</button>
+          <button class="btn" id="btn-toggle-gripper">🤏 Toggle Grip</button>
+          <button class="btn" id="btn-pick">📥 Pose Pick</button>
+          <button class="btn" id="btn-place">📤 Pose Place</button>
+          <button class="btn" id="btn-rest">💤 Rest / Fold</button>
+          <button class="btn" id="btn-reset">🔄 Reset All</button>
+        </div>
+      </section>
+
+      <!-- Center Overlay: Joysticks (Pointer-events: none pada background luar) -->
+      <section class="center-overlay">
+        <div class="joysticks-container interactive" id="joysticks-wrap">
+          <!-- Joystick 1 -->
+          <div class="joystick-box">
+            <span class="joystick-title">Joy 1</span>
+            <span class="joystick-subtitle">Base & Arm</span>
+            <div class="joystick-base" id="joy1-base">
+              <div class="joystick-stick" id="joy1-stick"></div>
+            </div>
+          </div>
+
+          <!-- Gripper Button -->
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+            <button class="btn primary" id="btn-joy-gripper" style="border-radius: 50%; width: 50px; height: 50px; padding: 0; font-size: 1.25rem;">
+              🤏
+            </button>
+            <span style="font-size: 0.62rem; color: var(--text-muted); font-weight: 600;">GPIO 4</span>
+          </div>
+
+          <!-- Joystick 2 -->
+          <div class="joystick-box">
+            <span class="joystick-title">Joy 2</span>
+            <span class="joystick-subtitle">Elbow & Wrist</span>
+            <div class="joystick-base" id="joy2-base">
+              <div class="joystick-stick" id="joy2-stick"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Panel: Telemetry -->
+      <section class="panel interactive" id="right-panel">
+        <div class="panel-title">
+          <span>📊 Telemetri Servo</span>
+          <span style="font-size: 0.68rem; color: var(--accent-blue);">Real-Time</span>
+        </div>
+        <table class="telemetry-table">
+          <thead>
+            <tr>
+              <th>Joint (GPIO)</th>
+              <th>Target</th>
+              <th>Aktual</th>
+              <th>PWM (µs)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Base (26)</td>
+              <td id="tel-t-base">90.0°</td>
+              <td id="tel-c-base" style="color: var(--accent-blue);">90.0°</td>
+              <td id="tel-pwm-base">1450</td>
+            </tr>
+            <tr>
+              <td>Arm (14)</td>
+              <td id="tel-t-arm">90.0°</td>
+              <td id="tel-c-arm" style="color: var(--accent-blue);">90.0°</td>
+              <td id="tel-pwm-arm">1450</td>
+            </tr>
+            <tr>
+              <td>Elbow (27)</td>
+              <td id="tel-t-elbow">90.0°</td>
+              <td id="tel-c-elbow" style="color: var(--accent-blue);">90.0°</td>
+              <td id="tel-pwm-elbow">1450</td>
+            </tr>
+            <tr>
+              <td>Wrist (12)</td>
+              <td id="tel-t-wrist">90.0°</td>
+              <td id="tel-c-wrist" style="color: var(--accent-blue);">90.0°</td>
+              <td id="tel-pwm-wrist">1450</td>
+            </tr>
+            <tr>
+              <td>Gripper (13)</td>
+              <td id="tel-t-gripper">100.0°</td>
+              <td id="tel-c-gripper" style="color: var(--accent-blue);">100.0°</td>
+              <td id="tel-pwm-gripper">1556</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <!-- Keyboard Controls Reference -->
+        <div class="panel-title" style="margin-top: 6px;">
+          <span>⌨️ Shortcut Laptop</span>
+        </div>
+        <div class="instruction-item">
+          <span>Base Putar Kiri / Kanan</span>
+          <div><span class="key-badge">A</span> <span class="key-badge">D</span></div>
+        </div>
+        <div class="instruction-item">
+          <span>Arm Maju / Mundur</span>
+          <div><span class="key-badge">W</span> <span class="key-badge">S</span></div>
+        </div>
+        <div class="instruction-item">
+          <span>Elbow Naik / Turun</span>
+          <div><span class="key-badge">←</span> <span class="key-badge">→</span></div>
+        </div>
+        <div class="instruction-item">
+          <span>Wrist Tekuk Atas / Bawah</span>
+          <div><span class="key-badge">↑</span> <span class="key-badge">↓</span></div>
+        </div>
+        <div class="instruction-item">
+          <span>Toggle Gripper</span>
+          <span class="key-badge">Space</span>
+        </div>
+        <div class="instruction-item">
+          <span>Home Position (90°)</span>
+          <span class="key-badge">H</span>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. STATE & MOTION MODEL (IDENTIK DENGAN ESP32 FIRMWARE)
+    // =========================================================================
+
+    const angles = { base: 90.0, arm: 90.0, elbow: 90.0, wrist: 90.0, gripper: 100.0 };
+    const targetAngles = { base: 90.0, arm: 90.0, elbow: 90.0, wrist: 90.0, gripper: 100.0 };
+
+    const MAX_STEP_DEG = 0.85; 
+    const JOY_SPEED_FACTOR = 1.2;
+
+    const joy1 = { x: 0, y: 0 };
+    const joy2 = { x: 0, y: 0 };
+
+    let gripperState = false; // false = Open (100°), true = Closed (20°)
+
+    function angleToMicroseconds(deg) {
+      return Math.round(500 + (deg / 180.0) * (2400 - 500));
+    }
+
+    // =========================================================================
+    // 2. THREE.JS 3D SCENE & ORBIT CONTROLS CONFIGURATION
+    // =========================================================================
+
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0f172a);
+    scene.fog = new THREE.FogExp2(0x0f172a, 0.035);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 16, 26);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    container.appendChild(renderer.domElement);
+
+    // INISIALISASI ORBIT CONTROLS DENGAN DUKUNGAN TOUCH & MOUSE PENUH
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.target.set(0, 7, 0);
+    controls.maxPolarAngle = Math.PI / 2 + 0.05; // Mencegah kamera tembus ke bawah lantai
+    controls.minDistance = 6;
+    controls.maxDistance = 45;
+
+    // Konfigurasi gesture sentuh (1 jari putar, 2 jari zoom/pan)
+    controls.touches = {
+      ONE: THREE.TOUCH.ROTATE,
+      TWO: THREE.TOUCH.DOLLY_PAN
+    };
+
+    // Quick Camera View Handlers
+    document.getElementById('btn-cam-reset').addEventListener('click', () => {
+      camera.position.set(0, 16, 26);
+      controls.target.set(0, 7, 0);
+      controls.update();
+    });
+
+    document.getElementById('btn-cam-front').addEventListener('click', () => {
+      camera.position.set(0, 8, 28);
+      controls.target.set(0, 8, 0);
+      controls.update();
+    });
+
+    document.getElementById('btn-cam-top').addEventListener('click', () => {
+      camera.position.set(0, 32, 0.1);
+      controls.target.set(0, 0, 0);
+      controls.update();
+    });
+
+    // Toggle Panel Handlers untuk Mobile/Layar Sempit
+    let panelVisible = true;
+    const leftPanel = document.getElementById('left-panel');
+    const rightPanel = document.getElementById('right-panel');
+    const btnTogglePanel = document.getElementById('btn-toggle-panel');
+
+    btnTogglePanel.addEventListener('click', () => {
+      panelVisible = !panelVisible;
+      if (panelVisible) {
+        leftPanel.classList.remove('hidden-mobile');
+        rightPanel.classList.remove('hidden-mobile');
+        btnTogglePanel.classList.add('active');
+      } else {
+        leftPanel.classList.add('hidden-mobile');
+        rightPanel.classList.add('hidden-mobile');
+        btnTogglePanel.classList.remove('active');
+      }
+    });
+
+    // Otomatis sembunyikan panel pada layar HP pertama kali buka agar 3D langsung terlihat
+    if (window.innerWidth <= 900) {
+      panelVisible = false;
+      leftPanel.classList.add('hidden-mobile');
+      rightPanel.classList.add('hidden-mobile');
+    }
+
+    // Pencahayaan (Lighting)
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.75);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0x38bdf8, 1.2);
+    dirLight.position.set(12, 24, 15);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    scene.add(dirLight);
+
+    const fillLight = new THREE.DirectionalLight(0x818cf8, 0.6);
+    fillLight.position.set(-15, 15, -12);
+    scene.add(fillLight);
+
+    // Lantai Grid & Pedestal
+    const gridHelper = new THREE.GridHelper(30, 30, 0x38bdf8, 0x1e293b);
+    gridHelper.position.y = -0.01;
+    scene.add(gridHelper);
+
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(60, 60),
+      new THREE.MeshStandardMaterial({ color: 0x090d16, roughness: 0.9, metalness: 0.1 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Material Model Robot
+    const matDark = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.4, metalness: 0.7 });
+    const matCyan = new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.3, metalness: 0.5 });
+    const matAccent = new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.2, metalness: 0.8 });
+    const matJoint = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.3, metalness: 0.6 });
+    const matClaw = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.2, metalness: 0.9 });
+
+    // =========================================================================
+    // 3. MODEL 3D ROBOT ARM (HIERARKI TULANG KINEMATIKA)
+    // =========================================================================
+
+    // 1. Static Base Stand
+    const standMesh = new THREE.Mesh(new THREE.CylinderGeometry(4.2, 4.8, 1.2, 32), matDark);
+    standMesh.position.y = 0.6;
+    standMesh.castShadow = true;
+    standMesh.receiveShadow = true;
+    scene.add(standMesh);
+
+    // 2. Base Turntable Pivot (Rotasi Yaw / Servo 6 - GPIO 26)
+    const basePivot = new THREE.Group();
+    basePivot.position.y = 1.2;
+    scene.add(basePivot);
+
+    const turntableMesh = new THREE.Mesh(new THREE.CylinderGeometry(3.6, 3.8, 1.4, 32), matCyan);
+    turntableMesh.position.y = 0.7;
+    turntableMesh.castShadow = true;
+    basePivot.add(turntableMesh);
+
+    const bracketLeft = new THREE.Mesh(new THREE.BoxGeometry(0.8, 2.8, 2.2), matDark);
+    bracketLeft.position.set(-1.6, 2.4, 0);
+    bracketLeft.castShadow = true;
+    basePivot.add(bracketLeft);
+
+    const bracketRight = new THREE.Mesh(new THREE.BoxGeometry(0.8, 2.8, 2.2), matDark);
+    bracketRight.position.set(1.6, 2.4, 0);
+    bracketRight.castShadow = true;
+    basePivot.add(bracketRight);
+
+    // 3. Shoulder Pivot (Pitch / Servo 4 - GPIO 14)
+    const shoulderPivot = new THREE.Group();
+    shoulderPivot.position.set(0, 3.2, 0);
+    basePivot.add(shoulderPivot);
+
+    const shoulderJointMesh = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 3.6, 24), matJoint);
+    shoulderJointMesh.rotation.z = Math.PI / 2;
+    shoulderJointMesh.castShadow = true;
+    shoulderPivot.add(shoulderJointMesh);
+
+    const armLinkLength = 6.8;
+    const armLinkMesh = new THREE.Mesh(new THREE.BoxGeometry(1.4, armLinkLength, 1.6), matCyan);
+    armLinkMesh.position.y = armLinkLength / 2;
+    armLinkMesh.castShadow = true;
+    shoulderPivot.add(armLinkMesh);
+
+    const sidePlate = new THREE.Mesh(new THREE.BoxGeometry(0.2, armLinkLength * 0.8, 2.0), matAccent);
+    sidePlate.position.set(0.8, armLinkLength / 2, 0);
+    shoulderPivot.add(sidePlate);
+
+    // 4. Elbow Pivot (Pitch / Servo 5 - GPIO 27)
+    const elbowPivot = new THREE.Group();
+    elbowPivot.position.set(0, armLinkLength, 0);
+    shoulderPivot.add(elbowPivot);
+
+    const elbowJointMesh = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 2.8, 24), matJoint);
+    elbowJointMesh.rotation.z = Math.PI / 2;
+    elbowJointMesh.castShadow = true;
+    elbowPivot.add(elbowJointMesh);
+
+    const forearmLength = 5.6;
+    const forearmLinkMesh = new THREE.Mesh(new THREE.BoxGeometry(1.2, forearmLength, 1.4), matDark);
+    forearmLinkMesh.position.y = forearmLength / 2;
+    forearmLinkMesh.castShadow = true;
+    elbowPivot.add(forearmLinkMesh);
+
+    // 5. Wrist Pivot (Pitch / Servo 3 - GPIO 12)
+    const wristPivot = new THREE.Group();
+    wristPivot.position.set(0, forearmLength, 0);
+    elbowPivot.add(wristPivot);
+
+    const wristJointMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 2.2, 24), matJoint);
+    wristJointMesh.rotation.z = Math.PI / 2;
+    wristJointMesh.castShadow = true;
+    wristPivot.add(wristJointMesh);
+
+    const wristMountMesh = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.8, 1.6), matCyan);
+    wristMountMesh.position.y = 0.9;
+    wristMountMesh.castShadow = true;
+    wristPivot.add(wristMountMesh);
+
+    // 6. Gripper Base & Fingers (Servo 2 - GPIO 13)
+    const gripperBasePivot = new THREE.Group();
+    gripperBasePivot.position.set(0, 1.8, 0);
+    wristPivot.add(gripperBasePivot);
+
+    // Left Finger
+    const leftClawPivot = new THREE.Group();
+    leftClawPivot.position.set(-0.6, 0.2, 0);
+    gripperBasePivot.add(leftClawPivot);
+
+    const leftClawMesh = new THREE.Mesh(new THREE.BoxGeometry(0.35, 2.4, 0.8), matClaw);
+    leftClawMesh.position.set(0, 1.2, 0);
+    leftClawMesh.castShadow = true;
+    leftClawPivot.add(leftClawMesh);
+
+    const leftTip = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.35, 0.8), matClaw);
+    leftTip.position.set(0.3, 2.3, 0);
+    leftClawPivot.add(leftTip);
+
+    // Right Finger
+    const rightClawPivot = new THREE.Group();
+    rightClawPivot.position.set(0.6, 0.2, 0);
+    gripperBasePivot.add(rightClawPivot);
+
+    const rightClawMesh = new THREE.Mesh(new THREE.BoxGeometry(0.35, 2.4, 0.8), matClaw);
+    rightClawMesh.position.set(0, 1.2, 0);
+    rightClawMesh.castShadow = true;
+    rightClawPivot.add(rightClawMesh);
+
+    const rightTip = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.35, 0.8), matClaw);
+    rightTip.position.set(-0.3, 2.3, 0);
+    rightClawPivot.add(rightTip);
+
+    // =========================================================================
+    // 4. UI EVENT BINDINGS
+    // =========================================================================
+
+    const sliders = {
+      base: document.getElementById('slider-base'),
+      arm: document.getElementById('slider-arm'),
+      elbow: document.getElementById('slider-elbow'),
+      wrist: document.getElementById('slider-wrist'),
+      gripper: document.getElementById('slider-gripper'),
+    };
+
+    const valBadges = {
+      base: document.getElementById('val-base'),
+      arm: document.getElementById('val-arm'),
+      elbow: document.getElementById('val-elbow'),
+      wrist: document.getElementById('val-wrist'),
+      gripper: document.getElementById('val-gripper'),
+    };
+
+    const telT = {
+      base: document.getElementById('tel-t-base'),
+      arm: document.getElementById('tel-t-arm'),
+      elbow: document.getElementById('tel-t-elbow'),
+      wrist: document.getElementById('tel-t-wrist'),
+      gripper: document.getElementById('tel-t-gripper'),
+    };
+
+    const telC = {
+      base: document.getElementById('tel-c-base'),
+      arm: document.getElementById('tel-c-arm'),
+      elbow: document.getElementById('tel-c-elbow'),
+      wrist: document.getElementById('tel-c-wrist'),
+      gripper: document.getElementById('tel-c-gripper'),
+    };
+
+    const telPwm = {
+      base: document.getElementById('tel-pwm-base'),
+      arm: document.getElementById('tel-pwm-arm'),
+      elbow: document.getElementById('tel-pwm-elbow'),
+      wrist: document.getElementById('tel-pwm-wrist'),
+      gripper: document.getElementById('tel-pwm-gripper'),
+    };
+
+    Object.keys(sliders).forEach(key => {
+      sliders[key].addEventListener('input', (e) => {
+        targetAngles[key] = parseFloat(e.target.value);
+      });
+    });
+
+    document.getElementById('btn-home').addEventListener('click', () => {
+      targetAngles.base = 90.0;
+      targetAngles.arm = 90.0;
+      targetAngles.elbow = 90.0;
+      targetAngles.wrist = 90.0;
+      targetAngles.gripper = 100.0;
+      gripperState = false;
+    });
+
+    function toggleGripper() {
+      gripperState = !gripperState;
+      targetAngles.gripper = gripperState ? 20.0 : 100.0;
+    }
+
+    document.getElementById('btn-toggle-gripper').addEventListener('click', toggleGripper);
+    document.getElementById('btn-joy-gripper').addEventListener('click', toggleGripper);
+
+    document.getElementById('btn-pick').addEventListener('click', () => {
+      targetAngles.base = 90.0;
+      targetAngles.arm = 130.0;
+      targetAngles.elbow = 40.0;
+      targetAngles.wrist = 30.0;
+      targetAngles.gripper = 100.0;
+      gripperState = false;
+    });
+
+    document.getElementById('btn-place').addEventListener('click', () => {
+      targetAngles.base = 45.0;
+      targetAngles.arm = 120.0;
+      targetAngles.elbow = 50.0;
+      targetAngles.wrist = 40.0;
+      targetAngles.gripper = 20.0;
+      gripperState = true;
+    });
+
+    document.getElementById('btn-rest').addEventListener('click', () => {
+      targetAngles.base = 90.0;
+      targetAngles.arm = 160.0;
+      targetAngles.elbow = 20.0;
+      targetAngles.wrist = 10.0;
+      targetAngles.gripper = 100.0;
+    });
+
+    document.getElementById('btn-reset').addEventListener('click', () => {
+      targetAngles.base = 90.0;
+      targetAngles.arm = 90.0;
+      targetAngles.elbow = 90.0;
+      targetAngles.wrist = 90.0;
+      targetAngles.gripper = 90.0;
+    });
+
+    // =========================================================================
+    // 5. VIRTUAL JOYSTICK HANDLERS DENGAN STOP PROPAGATION
+    // =========================================================================
+
+    function setupVirtualJoystick(baseEl, stickEl, onChange) {
+      let isDragging = false;
+      let center = { x: 0, y: 0 };
+      const radius = 38;
+
+      function onStart(e) {
+        e.stopPropagation(); // PENTING: Mencegah kamera 3D ikut berputar saat joystick disentuh
+        isDragging = true;
+        const rect = baseEl.getBoundingClientRect();
+        center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        onMove(e);
+      }
+
+      function onMove(e) {
+        if (!isDragging) return;
+        e.stopPropagation();
+        if (e.cancelable) e.preventDefault();
+
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+        let dx = clientX - center.x;
+        let dy = clientY - center.y;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist > radius) {
+          dx = (dx / dist) * radius;
+          dy = (dy / dist) * radius;
+        }
+
+        stickEl.style.transform = `translate(${dx}px, ${dy}px)`;
+        onChange(dx / radius, -(dy / radius));
+      }
+
+      function onEnd(e) {
+        if (!isDragging) return;
+        isDragging = false;
+        stickEl.style.transform = `translate(0px, 0px)`;
+        onChange(0, 0);
+      }
+
+      baseEl.addEventListener('mousedown', onStart);
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onEnd);
+
+      baseEl.addEventListener('touchstart', onStart, { passive: false });
+      window.addEventListener('touchmove', onMove, { passive: false });
+      window.addEventListener('touchend', onEnd);
+    }
+
+    setupVirtualJoystick(
+      document.getElementById('joy1-base'),
+      document.getElementById('joy1-stick'),
+      (nx, ny) => {
+        joy1.x = Math.abs(nx) < 0.15 ? 0 : nx;
+        joy1.y = Math.abs(ny) < 0.15 ? 0 : ny;
+      }
+    );
+
+    setupVirtualJoystick(
+      document.getElementById('joy2-base'),
+      document.getElementById('joy2-stick'),
+      (nx, ny) => {
+        joy2.x = Math.abs(nx) < 0.15 ? 0 : nx;
+        joy2.y = Math.abs(ny) < 0.15 ? 0 : ny;
+      }
+    );
+
+    // =========================================================================
+    // 6. SHORTCUT KEYBOARD LISTENER
+    // =========================================================================
+
+    const keysPressed = {};
+    window.addEventListener('keydown', (e) => {
+      keysPressed[e.code] = true;
+      if (e.code === 'Space') {
+        toggleGripper();
+        e.preventDefault();
+      }
+      if (e.code === 'KeyH') {
+        document.getElementById('btn-home').click();
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      keysPressed[e.code] = false;
+    });
+
+    function processKeyboardControls() {
+      if (keysPressed['KeyA']) joy1.x = -1.0;
+      else if (keysPressed['KeyD']) joy1.x = 1.0;
+      else if (document.getElementById('joy1-stick').style.transform === 'translate(0px, 0px)') joy1.x = 0;
+
+      if (keysPressed['KeyW']) joy1.y = 1.0;
+      else if (keysPressed['KeyS']) joy1.y = -1.0;
+      else if (document.getElementById('joy1-stick').style.transform === 'translate(0px, 0px)') joy1.y = 0;
+
+      if (keysPressed['ArrowLeft']) joy2.x = -1.0;
+      else if (keysPressed['ArrowRight']) joy2.x = 1.0;
+      else if (document.getElementById('joy2-stick').style.transform === 'translate(0px, 0px)') joy2.x = 0;
+
+      if (keysPressed['ArrowUp']) joy2.y = 1.0;
+      else if (keysPressed['ArrowDown']) joy2.y = -1.0;
+      else if (document.getElementById('joy2-stick').style.transform === 'translate(0px, 0px)') joy2.y = 0;
+    }
+
+    // =========================================================================
+    // 7. ANIMATION & RENDER LOOP
+    // =========================================================================
+
+    function updateSimulation() {
+      requestAnimationFrame(updateSimulation);
+
+      processKeyboardControls();
+
+      // Rate Control Integration
+      if (Math.abs(joy1.x) > 0.001) targetAngles.base = Math.max(0, Math.min(180, targetAngles.base + joy1.x * JOY_SPEED_FACTOR));
+      if (Math.abs(joy1.y) > 0.001) targetAngles.arm = Math.max(0, Math.min(180, targetAngles.arm + joy1.y * JOY_SPEED_FACTOR));
+      if (Math.abs(joy2.x) > 0.001) targetAngles.elbow = Math.max(0, Math.min(180, targetAngles.elbow + joy2.x * JOY_SPEED_FACTOR));
+      if (Math.abs(joy2.y) > 0.001) targetAngles.wrist = Math.max(0, Math.min(180, targetAngles.wrist + joy2.y * JOY_SPEED_FACTOR));
+
+      // Slew Rate Interpolator
+      Object.keys(angles).forEach(key => {
+        const diff = targetAngles[key] - angles[key];
+        if (Math.abs(diff) > 0.02) {
+          if (diff > 0) angles[key] += Math.min(diff, MAX_STEP_DEG);
+          else angles[key] -= Math.min(-diff, MAX_STEP_DEG);
+        } else {
+          angles[key] = targetAngles[key];
+        }
+      });
+
+      // Update Transform Robot 3D
+      basePivot.rotation.y = THREE.MathUtils.degToRad(180 - angles.base);
+      shoulderPivot.rotation.z = THREE.MathUtils.degToRad(angles.arm - 90);
+      elbowPivot.rotation.z = THREE.MathUtils.degToRad(90 - angles.elbow);
+      wristPivot.rotation.z = THREE.MathUtils.degToRad(90 - angles.wrist);
+
+      // Gripper: BUKA=100 deg, TUTUP=20 deg -> 100 = buka penuh, 20 = tutup penuh
+      const clawFactor = (100.0 - angles.gripper) / 80.0;
+      const clawAngle = THREE.MathUtils.lerp(0.35, 0.02, Math.max(0, Math.min(1, clawFactor)));
+      leftClawPivot.rotation.z = -clawAngle;
+      rightClawPivot.rotation.z = clawAngle;
+
+      // Update UI Telemetry
+      Object.keys(angles).forEach(key => {
+        if (document.activeElement !== sliders[key]) {
+          sliders[key].value = targetAngles[key].toFixed(1);
+        }
+        valBadges[key].textContent = `${angles[key].toFixed(0)}°`;
+        telT[key].textContent = `${targetAngles[key].toFixed(1)}°`;
+        telC[key].textContent = `${angles[key].toFixed(1)}°`;
+        telPwm[key].textContent = angleToMicroseconds(angles[key]);
+      });
+
+      // Update OrbitControls & Render
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    updateSimulation();
+  </script>
+</body>
+</html>
