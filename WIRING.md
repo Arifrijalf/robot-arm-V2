@@ -2,7 +2,9 @@
 
 Dokumen ini memuat panduan pengkabelan elektrikal lengkap, skema diagram, dan langkah-langkah eliminasi getaran (*anti-twitching*) untuk proyek lengan robot 5 Degree of Freedom (5-DOF) berbasis ESP32 yang **dikendalikan murni dari handphone via WiFi**.
 
-> **Perubahan utama:** Firmware (`src/main.cpp` / `arduino/robot_arm/robot_arm.ino`) dikendalikan **murni** dari HP (WiFi Access Point + halaman web + WebSocket). Modul joystick fisik **tidak dipakai sama sekali** oleh firmware saat ini — joystick di layar HP adalah virtual. Tidak ada kabel data tambahan untuk WiFi — modul WiFi sudah built-in di ESP32.
+> **Perubahan utama:** Firmware (`src/main.cpp`) kini punya **2 mode kendali**: **MANUAL** (joystick virtual + slider dari HP) dan **OTOMATIS** (pick & place 2 titik + sensor inframerah FC-51 untuk mendeteksi barang). Halaman kontrol di HP kini menampilkan **visual 3D real-time** yang ikut bergerak bersama lengan asli (three.js disajikan langsung dari flash ESP32 — tetap jalan di mode hotspot tanpa internet).
+>
+> **Catatan:** `arduino/robot_arm/robot_arm.ino` adalah salinan versi lama (sudah tidak memuat mode otomatis/3D). Firmware yang dipakai PlatformIO hanya `src/main.cpp`.
 
 ---
 
@@ -21,12 +23,29 @@ Dokumen ini memuat panduan pengkabelan elektrikal lengkap, skema diagram, dan la
 
 ---
 
-### B. Koneksi Tombol Push Button (Gripper Toggle)
+### B. Koneksi Tombol Push Button (Gripper Toggle / E-STOP)
 | Komponen | Pin 1 | Pin 2 | Mode Firmware |
 |---|---|---|---|
 | **Push Button** | **GPIO 4** | **GND** (ESP32) | `INPUT_PULLUP` (Internal resistor aktif, tanpa perlu resistor eksternal) |
 
-*Fungsi:* Menekan tombol ini akan membuka atau menutup gripper secara bergantian (*toggle*). Tombol ini tetap berfungsi walau dikendalikan dari HP.
+*Fungsi:* Menekan tombol ini akan membuka atau menutup gripper secara bergantian (*toggle*) di mode manual. **Di mode otomatis saat siklus sedang berjalan, tombol ini berubah fungsi menjadi E-STOP** (menghentikan siklus dan membekukan lengan di posisi tersebut).
+
+---
+
+### D. Koneksi Sensor Infrared FC-51 (Deteksi Barang - Mode Otomatis)
+| Pin Modul FC-51 | Terhubung ke | Keterangan |
+|---|---|---|
+| **VCC** | **3.3V** (atau 5V sesuai spesifikasi modul) | Daya modul |
+| **GND** | **GND** ESP32 (common ground servo) | Referensi sinyal |
+| **DO** (Digital Out) | **GPIO 34** (input-only, aman bersama WiFi) | Sinyal deteksi |
+
+*Logika firmware:* `DO = LOW` → **barang terdeteksi** (`#define IR_ACTIVE_LEVEL LOW`). Kalau modul terbalik logikanya, cukup ubah konstanta ini di `src/main.cpp`.
+
+*Pemasangan sensor:* Letakkan di **daerah titik A (pick)**, menghadap posisi barang — misalnya menempel di tepi meja/bidalan pick, mengarah ke tempat barang diletakkan. Atur potensiometer di modul sampai jarak deteksinya pas (umumnya 2–10 mm untuk barang yang berdekatan).
+
+> **CATATAN:** GPIO 34–39 **tidak punya resistor pull-up internal**. Modul FC-51 umumnya sudah membawa pull-up onboard pada jalur DO, jadi langsung boleh. Jika telemetri `IR: terdeteksi` terus menyala tanpa barang, tambahkan resistor eksternal **10 kΩ antara DO dan 3.3V**.
+>
+> Jangan menaruh kabel sinyal IR sensor paralel/berkumpul dengan kabel sinyal servo yang panjang — elektromagnetik dari servo bisa memicu deteksi palsu. Jika sering trigger palsu, naikkan `IR_DEBOUNCE_COUNT` di `src/main.cpp` (mis. 3 → 6).
 
 ---
 
@@ -103,12 +122,28 @@ Nilai-nilai berikut dibaca langsung dari source code (`src/main.cpp`), sehingga 
 | Langkah maksimum per update | **0.75°** | `MAX_STEP_DEG` (slew-rate interceptor, anti-getar) |
 | Kecepatan virtual joystick | **1.2°/loop per unit defleksi (−1..1)** | `JOY_SPEED_FACTOR` |
 | Deadzone joystick HP | **0.15** (throttle ke 0) | Di halaman kontrol web |
+| Interval telemetri ke HP | **50 ms** (±20 fps), isi `currentAngles` | `TELEMETRY_INTERVAL_MS` → visual 3D & slider real-time |
+| Settle lengan setelah sampai (otomatis) | **300 ms** | `AUTO_MOVE_SETTLE_MS` |
+| Settle gripper buka/tutup (otomatis) | **600 ms** | `AUTO_GRIP_SETTLE_MS` |
+| Toleransi "sampai tujuan" | **0.10°** | `MOTION_DONE_TOL` |
+| Debounce sensor IR | **3 x 15 ms** | `IR_DEBOUNCE_COUNT` |
+
+### B2. Mode Otomatis: Titik Pose (Teach) & NVS
+- Titik **A** (pick) dan **B** (place) masing-masing menyimpan 5 sudut sendi (gripper, wrist, arm, elbow, base).
+- Teach dari HP: di mode manual, posisikan lengan → tekan **Simpan Titik A** / **Simpan Titik B**.
+- Persist di **NVS (flash internal)** via `Preferences` (namespace `robotarm`) → **tahan mati listrik**.
+- Siklus otomatis: `Home → A (pick) → gripper tutup → B (place) → gripper buka → Home → tunggu IR lagi`.
 
 ### C. Perintah Serial (USB, 115200 baud) — untuk debug
 | Karakter | Aksi |
 |---|---|
-| `o` / `O` | Membuka gripper (100°) |
-| `g` / `G` | Menutup gripper (20°) |
+| `m` / `M` | Ganti ke mode MANUAL |
+| `a` / `A` | Ganti ke mode OTOMATIS |
+| `r` / `R` | Mulai siklus otomatis (otomatis pindah mode OTOMATIS) |
+| `x` / `X` | STOP: hentikan siklus, bekukan lengan di posisi terakhir |
+| `p` / `P` | Cetak status: mode, state, IR, isi Titik A & B |
+| `o` / `O` | Membuka gripper (100°) — hanya mode manual |
+| `g` / `G` | Menutup gripper (20°) — hanya mode manual |
 | `h` / `H` | Home: semua sendi ke 90°, gripper buka |
 
 ### D. Pustaka (diprovide oleh `platformio.ini`)
@@ -287,8 +322,8 @@ flowchart TD
         O -- ya --> P[target gripper = 20° jika TUTUP<br>atau 100° jika BUKA]
         O -- tidak --> Q
         P --> Q[updateServosSmooth,<br>geser sudut max 0.75° per 15ms<br>slew-rate anti getar]
-        Q --> R{sudah 100ms?}
-        R -- ya --> S[broadcast telemetri via WS,<br>S,base,arm,elbow,wrist,gripper]
+        Q --> R{sudah 50ms?}
+        R -- ya --> S[broadcast telemetri via WS,<br>S,base,arm,elbow,wrist,gri,mode,state,ir,hasA,hasB<br>isi currentAngles = posisi asli lengan]
         R -- tidak --> LOOP
         S --> LOOP
     end
@@ -303,13 +338,18 @@ flowchart TD
     V -- H / h --> W2[Semua sendi target 90°<br>gripper = 100° BUKA<br>gripperState = false]
     V -- O / o --> W3[gripperCmdFromPhone = false<br>terapkan saat loop berikut]
     V -- G C atau g c --> W4[gripperCmdFromPhone = true<br>TUTUP]
-    V -- A,idx,sudut --> W5[clamp 0..180 lalu jadikan target<br>idx 0=Gripper 1=Wrist 2=Arm 3=Elbow 4=Base<br>Gripper, state TUTUP jika sudut di bawah 60°]
-    V -- x1,y1,x2,y2,g --> W6[clamp -1..1<br>update joyX1 joyY1 joyX2 joyY2<br>bit g menandakan gripper]
-    W1 -- Serial USB --> S1{o / g / h?}
-    S1 -- o --> S2[target gripper = 100° BUKA]
-    S1 -- g --> S3[target gripper = 20° TUTUP]
-    S1 -- h --> S4[Home, semua 90°<br>gripper 100° BUKA]
-    W1 -- Tombol fisik GPIO 4 --> T1[toggle gripperState<br>target = TUTUP 20° atau BUKA 100°]
+    V -- A,idx,sudut --> W5[clamp 0..180 lalu jadikan target<br>idx 0=Gripper 1=Wrist 2=Arm 3=Elbow 4=Base<br>Gripper, state TUTUP jika sudut di bawah 60°<br>HANYA mode manual]
+    V -- x1,y1,x2,y2,g --> W6[clamp -1..1<br>update joyX1 joyY1 joyX2 joyY2<br>bit g menandakan gripper<br>HANYA mode manual]
+    V -- M,0 atau M,1 --> W7[setMode: MANUAL atau OTOMATIS<br>ke MANUAL membatalkan siklus + bekukan lengan]
+    V -- S,a atau S,b --> W8[teach pose: salin targetAngles<br>ke poseA/poseB + persist NVS<br>ditolak jika bukan mode manual]
+    V -- R --> W9[startAuto: cek hasPoseA/B,<br>go Home -> AS_HOME<br>ditolak: broadcast E,np]
+    V -- X --> W10[stopAuto: AS_IDLE<br>target = currentAngles bekuk]
+    W1 -- Serial USB --> S1{m a r x p / o g h?}
+    S1 -- m a r x p --> S5[sama seperti perintah WebSocket<br>M S R X + cetak info]
+    S1 -- o/g/h --> S2-4[gripper & home<br>o/g ditolak di mode otomatis]
+    W1 -- Tombol fisik GPIO 4 --> T1{mode otomatis & siklus jalan?}
+    T1 -- ya --> T2[E-STOP: stopAuto + bekukan lengan<br>+ broadcast E,st]
+    T1 -- tidak --> T3[toggle gripperState<br>target = TUTUP 20° atau BUKA 100°]
 
     W2 & W3 & W4 & W5 & W6 & S2 & S3 & S4 & T1 --> SM([updateServosSmooth<br>gerakan halus ke servo])
 ```
@@ -332,3 +372,77 @@ flowchart TD
 ```
 
 > **Catatan:** Sesuai kode di `initServos()`, saat boot gripper mulai bergerak menuju **100° (BUKA)** secara halus (kira-kira 300 ms, karena slew-rate 0.75°/15ms), sehingga posisi firmware dan tampilan halaman HP selalu konsisten.
+
+---
+
+## 8. Mode Otomatis (Pick & Place) & Visual 3D
+
+### 8.A Tabel Protokol WebSocket Lengkap
+
+| Pesan HP → ESP32 | Fungsi | Mode |
+|---|---|---|
+| `x1,y1,x2,y2,g` | Defleksi joystick 1 & 2 + state gripper | MANUAL |
+| `A,<idx>,<sudut>` | Set target sudut sendi (idx: 0=Gripper, 1=Wrist, 2=Arm, 3=Elbow, 4=Base) | MANUAL |
+| `H` | Home (semua 90°, gripper buka); membatalkan siklus otomatis | Semua |
+| `O` | Buka gripper | MANUAL |
+| `G` / `C` | Tutup gripper | MANUAL |
+| `M,0` / `M,1` | Ganti ke mode **MANUAL** / **OTOMATIS** | Semua |
+| `S,a` / `S,b` | **Teach**: simpan posisi lengan saat ini sebagai Titik A / B (persist NVS) | MANUAL |
+| `R` | **MULAI** siklus otomatis (ditolak + alert jika titik belum disimpan) | OTOMATIS |
+| `X` | **BERHENTI**: abort siklus, bekukan lengan di posisi terakhir | Semua |
+
+| Pesan ESP32 → HP | Isi |
+|---|---|
+| `S,<base>,<arm>,<elbow>,<wrist>,<grip>,<mode>,<state>,<ir>,<hasA>,<hasB>` | Telemetri **currentAngles** (posisi asli lengan, 50 ms) + mode (0/1), state auto (0–6), IR (0/1), titik tersimpan |
+| `E,np` | Alert: Titik A/B belum disimpan |
+| `E,st` | Alert: siklus dihentikan via E-STOP tombol fisik |
+
+**Kode state otomatis** (`state`): 0`=Idle`, 1`=Menunggu barang`, 2`=Menuju Titik A`, 3`=Menggenggam`, 4`=Menuju Titik B`, 5`=Melepaskan`, 6`=Kembali ke Home`.
+
+### 8.B Visual 3D Real-Time (Three.js + Mesh CAD Asli)
+- Halaman memuat `GET /three.min.js` — **three.js r128 dipadatkan gzip (±149 KB) dari flash ESP32 (PROGMEM `src/three_js_gz.h`)**, dengan header `Content-Encoding: gzip` + `Cache-Control: max-age=86400`.
+- **Mesh CAD asli robot** (kit "grippy-bot" / Roboteurs, 6 part STL binary) di-gzip dan di-embed ke `src/arm_stl_gz.h`, disajikan di `GET /mesh/<nama>`:
+  | Endpoint | Part STL | Sendi di visual |
+  |---|---|---|
+  | `/mesh/base` | `Base.STL` (290 KB) | Statis (dudukan) |
+  | `/mesh/spin` | `BaseSpin.STL` (116 KB) | Base — servo GPIO 26 |
+  | `/mesh/basearm` + `/mesh/midarm` | `BaseArm.STL` + `MidArm.STL` | Arm — servo GPIO 14 |
+  | `/mesh/griparm` | `GripperArm.STL` (88 KB) | Elbow — servo GPIO 27 |
+  | `/mesh/finger` | `Finger.STL` (49 KB, ×2 dicerminkan) | Gripper — servo GPIO 13 (Wrist servo 12 memiringkan gripper) |
+- Total mesh gzip **±253 KB** (≈ 17.700 triangle) → partisi app diganti `huge_app.csv` (3 MB) di `platformio.ini` — OTA tidak dipakai, aman.
+- Karena mesh lengan dipecah per part, hierarki animasi memakai **pivot** yang didefinisikan di blok `PIV`/`SG` pada bagian script visual halaman (`main.cpp`) dalam satuan mm ruang CAD — geser/tandai (+1/−1) bila rotasi perlu dikalibrasi.
+- **Tidak perlu internet** → tetap jalan di mode fallback hotspot `RobotArm-5DOF`.
+- Browser meng-lerp antar frame sehingga animasi mulus 60 fps dari telemetri 20 fps. Kamera bisa diatur: 1 jari = putar, 2 jari = zoom (desktop: scroll).
+- Slider derajat & tabel posisi juga mengikuti `currentAngles` real-time; slider yang sedang dipegang jari pengguna **tidak** dioverride hingga jari dilepas.
+- Jika `/three.min.js` atau `/mesh/*` gagal dimuat, visual otomatis fallback ke model primitif sederhana agar kontrol tetap berjalan.
+
+### 8.C Flowchart Mode Otomatis
+
+```mermaid
+flowchart TD
+    U([Pengguna: mode manual<br>atur lengan ke posisi pick]) --> V[Simpan Titik A<br>poseA targetAngles ke NVS]
+    V --> W([atur lengan ke posisi place]) --> X[Simpan Titik B<br>poseB targetAngles ke NVS]
+    X --> Y([pindah mode OTOMATIS + MULAI]) --> Z{hasPoseA & hasPoseB?}
+    Z -- tidak --> Z1[broadcast E,np<br>ditolak]
+    Z -- ya --> H1[Targets = 90 semua<br>gripper BUKA - AS_HOME]
+    H1 -->|lengan sampai + settle 300ms| ST[AS_WAIT - standby Home<br>telemetri IR: bersih]
+    ST -->|IR LOW stabil 45ms| GA[AS_GO_A - targets poseA<br>gripper dipastukan BUKA]
+    GA -->|sampai + settle| GR[AS_GRIP - gripper TUTUP 20 deg<br>settle 600ms]
+    GR --> GB[AS_GO_B - joints dari poseB<br>gripper tetap TUTUP]
+    GB -->|sampai + settle| RE[AS_RELEASE - gripper BUKA<br>settle 600ms]
+    RE --> HO[AS_HOME - kembali ke 90 semua]
+    HO -->|sampai + settle| ST
+    ST -.E-STOP tombol GPIO 4 / X / M,0.-> AB[AS_IDLE - target = current<br>lengan bekuk]
+```
+
+### 8.D Checklist Khusus Mode Otomatis & Visual 3D
+
+| Gejala | Penyebab Umum | Solusi |
+|---|---|---|
+| `MULAI` tidak bisa ditekan / ditolak `E,np` | Titik A atau B belum disimpan | Mode manual → posisikan lengan → Simpan Titik A & B |
+| IR selalu "terdeteksi" walau tak ada barang | DO melayang / sensitivitas berlebihan / noise servo | Pull-up 10 kΩ ke 3.3V; putar potensiometer modul; naikkan `IR_DEBOUNCE_COUNT` |
+| IR tak pernah mendeteksi | Sensitivitas terlalu rendah / jarak salah / logika terbalik | Pindahkan sensor mendekati lokasi barang; cek dengan Serial `p`; ubah `IR_ACTIVE_LEVEL` jika logika modul terbalik |
+| Visual 3D kosong / pesan "gagal dimuat" | `/three.min.js` rerouted atau cache lama | Buka `http://IP/three.min.js` untuk tes; clear cache browser; pastikan tak ada proxy |
+| 3D bergerak tapi robot asli tidak (atau sebaliknya) | Kabel servo longgar / pose != target | Cek kabel sinyal servo; telemetri menampilkan `currentAngles` yang dihitung firmware (open-loop) — posisi asli bisa menjeda bila servo mekanis terganjal |
+| Siklus terhenti di tengah | E-STOP tombol ditekan / `X` dikirim / mode diganti | Press MULAI lagi; cek Serial `p` |
+| Robot gerak terbalik atau menabrak saat otomatis | Teach pose terlalu dekat hardware limit | Re-learn Titik A/B dengan amplitudo lebih aman |
